@@ -4,7 +4,11 @@ from src.models import *
 import time
 import torch.optim
 from src.expressions_transfer import *
+import sys
 
+if not sys.warnoptions:
+    import warnings
+    warnings.simplefilter("ignore")
 batch_size = 64
 embedding_size = 128
 hidden_size = 512
@@ -17,10 +21,9 @@ n_layers = 2
 data = load_raw_data("data/Math_23K.json")
 
 pairs, generate_nums, copy_nums = transfer_num(data)
-
 temp_pairs = []
 for p in pairs:
-    temp_pairs.append((p[0], from_infix_to_prefix(p[1]), p[2], p[3]))
+    temp_pairs.append((p[0], from_infix_to_prefix(p[1]), p[2], p[3], p[4]))
 pairs = temp_pairs
 
 fold_size = int(len(pairs) * 0.2)
@@ -41,9 +44,15 @@ for fold in range(5):
             pairs_tested += fold_pairs[fold_t]
         else:
             pairs_trained += fold_pairs[fold_t]
+    
+    #pairs_trained_copy = pairs_trained.copy()
+    #pairs_trained = sorted(pairs_trained, key=lambda item: len(item[1]))
+    # sorted_index = [i[0] for i in sorted(enumerate(pairs_trained_copy), key=lambda x:x[1])]
+    # generate_nums = [generate_nums[i] for i in sorted_index]
 
     input_lang, output_lang, train_pairs, test_pairs = prepare_data(pairs_trained, pairs_tested, 5, generate_nums,
                                                                     copy_nums, tree=True)
+    
     # Initialize models
     encoder = EncoderSeq(input_size=input_lang.n_words, embedding_size=embedding_size, hidden_size=hidden_size,
                          n_layers=n_layers)
@@ -81,15 +90,15 @@ for fold in range(5):
         generate_scheduler.step()
         merge_scheduler.step()
         loss_total = 0
-        input_batches, input_lengths, output_batches, output_lengths, nums_batches, num_stack_batches, num_pos_batches, num_size_batches = prepare_train_batch(train_pairs, batch_size)
+        input_batches, input_lengths, output_batches, output_lengths, nums_batches, num_stack_batches, num_pos_batches, num_size_batches, num_ans_batches = prepare_train_batch(train_pairs, batch_size)
         print("fold:", fold + 1)
         print("epoch:", epoch + 1)
         start = time.time()
-        for idx in range(len(input_lengths)):
+        for idx in range(len(input_lengths)): #batch
             loss = train_tree(
                 input_batches[idx], input_lengths[idx], output_batches[idx], output_lengths[idx],
                 num_stack_batches[idx], num_size_batches[idx], generate_num_ids, encoder, predict, generate, merge,
-                encoder_optimizer, predict_optimizer, generate_optimizer, merge_optimizer, output_lang, num_pos_batches[idx])
+                encoder_optimizer, predict_optimizer, generate_optimizer, merge_optimizer, output_lang, num_pos_batches[idx], num_ans_batches[idx], nums_batches[idx])
             loss_total += loss
 
         print("loss:", loss_total / len(input_lengths))
