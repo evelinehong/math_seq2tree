@@ -94,9 +94,8 @@ def load_raw_data(filename):  # load the json data to list(dict()) for MATH 23K
                 data_d["equation"] = data_d["equation"][:-5]
             data.append(data_d)
             js = ""
-
+    #data = sorted(data, key=lambda item: len(item["equation"]))
     return data
-
 
 # remove the superfluous brackets
 def remove_brackets(x):
@@ -277,8 +276,8 @@ def transfer_num(data):  # transfer num into "NUM"
         nums = []
         input_seq = []
         seg = d["segmented_text"].strip().split(" ")
+        answer = d["ans"]
         equations = d["equation"][2:]
-
         for s in seg:
             pos = re.search(pattern, s)
             if pos and pos.start() == 0:
@@ -345,7 +344,7 @@ def transfer_num(data):  # transfer num into "NUM"
                 num_pos.append(i)
         assert len(nums) == len(num_pos)
         # pairs.append((input_seq, out_seq, nums, num_pos, d["ans"]))
-        pairs.append((input_seq, out_seq, nums, num_pos))
+        pairs.append((input_seq, out_seq, nums, num_pos, answer))
 
     temp_g = []
     for g in generate_nums:
@@ -668,7 +667,7 @@ def prepare_data(pairs_trained, pairs_tested, trim_min_count, generate_nums, cop
         # train_pairs.append((input_cell, len(input_cell), output_cell, len(output_cell),
         #                     pair[2], pair[3], num_stack, pair[4]))
         train_pairs.append((input_cell, len(input_cell), output_cell, len(output_cell),
-                            pair[2], pair[3], num_stack))
+                            pair[2], pair[3], num_stack, pair[4]))
     print('Indexed %d words in input language, %d words in output' % (input_lang.n_words, output_lang.n_words))
     print('Number of training data %d' % (len(train_pairs)))
     for pair in pairs_tested:
@@ -694,7 +693,7 @@ def prepare_data(pairs_trained, pairs_tested, trim_min_count, generate_nums, cop
         #                     pair[2], pair[3], num_stack, pair[4]))
         test_pairs.append((input_cell, len(input_cell), output_cell, len(output_cell),
                            pair[2], pair[3], num_stack))
-    print('Number of testind data %d' % (len(test_pairs)))
+    print('Number of testing data %d' % (len(test_pairs)))
     return input_lang, output_lang, train_pairs, test_pairs
 
 
@@ -800,7 +799,7 @@ def pad_seq(seq, seq_len, max_length):
 # prepare the batches
 def prepare_train_batch(pairs_to_batch, batch_size):
     pairs = copy.deepcopy(pairs_to_batch)
-    random.shuffle(pairs)  # shuffle the pairs
+    #random.shuffle(pairs)  # shuffle the pairs
     pos = 0
     input_lengths = []
     output_lengths = []
@@ -811,6 +810,7 @@ def prepare_train_batch(pairs_to_batch, batch_size):
     num_stack_batches = []  # save the num stack which
     num_pos_batches = []
     num_size_batches = []
+    num_ans_batches = []
     while pos + batch_size < len(pairs):
         batches.append(pairs[pos:pos+batch_size])
         pos += batch_size
@@ -820,7 +820,7 @@ def prepare_train_batch(pairs_to_batch, batch_size):
         batch = sorted(batch, key=lambda tp: tp[1], reverse=True)
         input_length = []
         output_length = []
-        for _, i, _, j, _, _, _ in batch:
+        for _, i, _, j, _, _, _, _ in batch:
             input_length.append(i)
             output_length.append(j)
         input_lengths.append(input_length)
@@ -833,20 +833,23 @@ def prepare_train_batch(pairs_to_batch, batch_size):
         num_stack_batch = []
         num_pos_batch = []
         num_size_batch = []
-        for i, li, j, lj, num, num_pos, num_stack in batch:
-            num_batch.append(len(num))
+        num_ans_batch = []
+        for i, li, j, lj, num, num_pos, num_stack, answer in batch:
+            num_batch.append(num)
             input_batch.append(pad_seq(i, li, input_len_max))
             output_batch.append(pad_seq(j, lj, output_len_max))
             num_stack_batch.append(num_stack)
             num_pos_batch.append(num_pos)
             num_size_batch.append(len(num_pos))
+            num_ans_batch.append(answer)
         input_batches.append(input_batch)
         nums_batches.append(num_batch)
         output_batches.append(output_batch)
         num_stack_batches.append(num_stack_batch)
         num_pos_batches.append(num_pos_batch)
         num_size_batches.append(num_size_batch)
-    return input_batches, input_lengths, output_batches, output_lengths, nums_batches, num_stack_batches, num_pos_batches, num_size_batches
+        num_ans_batches.append(num_ans_batch)
+    return input_batches, input_lengths, output_batches, output_lengths, nums_batches, num_stack_batches, num_pos_batches, num_size_batches, num_ans_batches
 
 
 def get_num_stack(eq, output_lang, num_pos):

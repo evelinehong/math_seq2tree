@@ -40,15 +40,16 @@ def masked_cross_entropy(logits, target, length):
     # target_flat: (batch * max_len, 1)
     target_flat = target.view(-1, 1)
     # losses_flat: (batch * max_len, 1)
+    # print (target_flat)
     losses_flat = -torch.gather(log_probs_flat, dim=1, index=target_flat)
-
+    # print (losses_flat)
     # losses: (batch, max_len)
     losses = losses_flat.view(*target.size())
     # mask: (batch, max_len)
     mask = sequence_mask(sequence_length=length, max_len=target.size(1))
     losses = losses * mask.float()
     loss = losses.sum() / length.float().sum()
-    # if loss.item() > 10:
+    # if loss.item() > 10:jn
     #     print(losses, target)
     return loss
 
@@ -78,9 +79,11 @@ def masked_cross_entropy_without_logit(logits, target, length):
     # log_probs_flat: (batch * max_len, num_classes)
     log_probs_flat = torch.log(logits_flat + 1e-12)
 
+    print (log_probs_flat)
     # target_flat: (batch * max_len, 1)
     target_flat = target.view(-1, 1)
     # losses_flat: (batch * max_len, 1)
+
     losses_flat = -torch.gather(log_probs_flat, dim=1, index=target_flat)
 
     # losses: (batch, max_len)
