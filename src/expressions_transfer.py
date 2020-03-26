@@ -119,7 +119,6 @@ def out_expression_list(test, output_lang, num_list, num_stack=None):
             res.append(c)
     return res
 
-
 def compute_postfix_expression(post_fix):
     st = list()
     operators = ["+", "-", "^", "*", "/"]

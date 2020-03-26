@@ -48,49 +48,47 @@ def prefix_to_infix(formula, length):
             prev_op = ch
     return stack[-1]
 
-def find_fix(pred, gt, all_prob, sym_list, n_step):
+def find_fix(pred, gt, all_prob, sym_list, num_start, n_step):
     """
     preds: batch_size * expr len                 int - predicted ids
     res: batch_size                              float - labeled correct result
     probs: batch_size * expr len * classes       float - predicted all probabilities
     num_list: batch_size * list
     """
-    gt = eval(gt)
+    try:
+        gt = eval(gt)
 
-    for i in range(len(pred)):
-        if  any(char.isdigit() for char in pred[i]):
-            pred[i] = eval(pred[i])
+        for i in range(len(pred)):
+            if  any(char.isdigit() for char in pred[i]):
+                pred[i] = eval(pred[i].replace("%", "/100"))
+        
+        for i in range(len(sym_list)):
+            if  any(char.isdigit() for char in sym_list[i]):
+                sym_list[i] = eval(sym_list[i].replace("%", "/100"))
     
-    for i in range(len(sym_list)):
-        if  any(char.isdigit() for char in sym_list[i]):
-            sym_list[i] = eval(sym_list[i])
+    except:
+        return []
 
     tokens = list(zip(pred, all_prob))
-    etree = ExprTree(sym_list)
+    etree = ExprTree(sym_list, num_start)
     etree.parse(tokens)
     fix = []
     if abs(etree.res()[0] - gt) <= 1e-5:
         fix = [sym_list.index(i) for i in pred]
-        print("No fix needed")
+        # print("No fix needed")
     else:
         output = etree.fix(gt, n_step=n_step)
         if output:
-            fix = [sym_list.index(i) for i in output]
-
-            # old_temp = [self.class_list[id] for id in pred]
-            # old_str = [str(x) for x in [inverse_temp_to_num(temp, num_list_single) for temp in old_temp]]
-
-            # new_ids = fix
-            # new_temp = [self.class_list[id] for id in new_ids]
-            # new_str = [str(x) for x in [inverse_temp_to_num(temp, num_list_single) for temp in new_temp]]
+            fix = [sym_list.index(i) for i in output[0]]
 
 
             #     print(f"  Fix found: {''.join(old_str)} "
             #             f"=> {''.join(new_str)} = {gt}")
             #     print(f"  {output}")
-            print ("fix found")
-            print (pred)
-            print (fix)
+            # print ("fix found")
+            # print (gt)
+            # print (pred)
+            # print (output[0])
 
     return fix
 
@@ -875,6 +873,9 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
     target = target.transpose(0, 1).contiguous()
     
     all_node_outputs_mask = torch.stack(all_node_outputs_mask, dim=1)  # B x S x N
+    
+    fix_target = torch.zeros(batch_size, max_target_length, dtype = torch.long)
+    fix_length = target_length
 
     for idx, exp, gt, num, num_stack in zip(range(batch_size), generate_exps, target, num_list, nums_stack_batch):
         generate = out_expression_list(exp, output_lang, num)
@@ -895,7 +896,13 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
             num_ans[idx],
             probs,
             all_list,
-            5)
+            num_start,
+            20)
+        
+        if len(fix):
+            fix_target[idx][:target_length[idx]] = torch.LongTensor(fix)
+        else:
+            fix_length[idx] = 0
         # gen_infix = prefix_to_infix (generate, target_length[idx])
         # print (gen_infix)
         # print ("\n")
@@ -904,11 +911,12 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
     if USE_CUDA:
         # all_leafs = all_leafs.cuda()
         all_node_outputs = all_node_outputs.cuda()
-        target = target.cuda()
+        # target = target.cuda()
+        fix_target = fix_target.cuda()
 
     # op_target = target < num_start
     # loss_0 = masked_cross_entropy_without_logit(all_leafs, op_target.long(), target_length)
-    loss = masked_cross_entropy(all_node_outputs, target, target_length)
+    loss = masked_cross_entropy(all_node_outputs, fix_target, fix_length)
     # loss = loss_0 + loss_1
     loss.backward()
     # clip the grad
