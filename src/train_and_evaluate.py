@@ -2,6 +2,7 @@ from src.masked_cross_entropy import *
 from src.pre_data import *
 from src.expressions_transfer import *
 from src.models import *
+from .diagnosis_multistep import ExprTree
 import math
 import torch
 import torch.optim
@@ -27,6 +28,71 @@ def time_since(s):  # compute time
     h = math.floor(m / 60)
     m -= h * 60
     return '%dh %dm %ds' % (h, m, s)
+
+def prefix_to_infix(formula, length):
+    formula = formula[:length]
+    stack = []
+    prev_op = None
+    PRIORITY = {"+": 0, "-": 0, "*": 1, "/": 1, "^": 1}
+    for ch in reversed(formula):
+        if not ch in ["+", "-", "*", "/", "^"]:
+            stack.append(ch)
+        else:
+            a = stack.pop()
+            b = stack.pop()
+            if prev_op and PRIORITY[prev_op] < PRIORITY[ch]:
+                exp = '('+a+')'+ch+b
+            else:
+                exp = a+ch+b
+            stack.append(exp)
+            prev_op = ch
+    return stack[-1]
+
+def find_fix(pred, gt, all_prob, sym_list, n_step):
+    """
+    preds: batch_size * expr len                 int - predicted ids
+    res: batch_size                              float - labeled correct result
+    probs: batch_size * expr len * classes       float - predicted all probabilities
+    num_list: batch_size * list
+    """
+    gt = eval(gt)
+
+    for i in range(len(pred)):
+        if  any(char.isdigit() for char in pred[i]):
+            pred[i] = eval(pred[i])
+    
+    for i in range(len(sym_list)):
+        if  any(char.isdigit() for char in sym_list[i]):
+            sym_list[i] = eval(sym_list[i])
+
+    tokens = list(zip(pred, all_prob))
+    etree = ExprTree(sym_list)
+    etree.parse(tokens)
+    fix = []
+    if abs(etree.res()[0] - gt) <= 1e-5:
+        fix = [sym_list.index(i) for i in pred]
+        print("No fix needed")
+    else:
+        output = etree.fix(gt, n_step=n_step)
+        if output:
+            fix = [sym_list.index(i) for i in output]
+
+            # old_temp = [self.class_list[id] for id in pred]
+            # old_str = [str(x) for x in [inverse_temp_to_num(temp, num_list_single) for temp in old_temp]]
+
+            # new_ids = fix
+            # new_temp = [self.class_list[id] for id in new_ids]
+            # new_str = [str(x) for x in [inverse_temp_to_num(temp, num_list_single) for temp in new_temp]]
+
+
+            #     print(f"  Fix found: {''.join(old_str)} "
+            #             f"=> {''.join(new_str)} = {gt}")
+            #     print(f"  {output}")
+            print ("fix found")
+            print (pred)
+            print (fix)
+
+    return fix
 
 def generate_rule_mask(decoder_input, nums_batch, word2index, batch_size, nums_start, copy_nums, generate_nums,
                        english):
@@ -641,7 +707,7 @@ class TreeEmbedding:  # the class save the tree
 
 def train_tree(input_batch, input_length, target_batch, target_length, nums_stack_batch, num_size_batch, generate_nums,
                encoder, predict, generate, merge, encoder_optimizer, predict_optimizer, generate_optimizer,
-               merge_optimizer, output_lang, num_pos, num_ans, num_list, english=False):
+               merge_optimizer, output_lang, num_pos, num_ans, num_list, mask_flag = False, english=False):
     # sequence mask for attention
     seq_mask = []
     max_len = max(input_length)
@@ -688,7 +754,8 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
     # Prepare input and output variables
     node_stacks = [[TreeNode(_)] for _ in problem_output.split(1, dim=0)]
     max_target_length = max(target_length)
-    # max_gen_length = max([2*len(i)-1 for i in num_list])
+    gen_length = [[2*len(i)-1 for i in num_list]]
+    max_gen_length = max(gen_length)
     all_node_outputs = []
     # all_leafs = []
 
@@ -704,6 +771,11 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
     #generate_exps = torch.zeros((max_gen_length, batch_size), dtype = torch.int)
  
     generated = [[] for j in range (batch_size)]
+    num_flags = [False for j in range (batch_size)]
+    generated_ops = [0 for j in range (batch_size)]
+    generated_nums = [0 for j in range (batch_size)]
+    
+    all_node_outputs_mask = []
 
     for t in range(max_target_length):
         num_score, op, current_embeddings, current_context, current_nums_embeddings = predict(
@@ -715,13 +787,45 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
         all_node_outputs.append(outputs2)
 
         num_score2 = num_score
-        for i in range (batch_size):
-            num_score2[i][:len(generate_nums)] = -1e1
-            for j in generated[i]:
-                num_score2[i][j] = -1e1
-        outputs = torch.cat((op, num_score2), 1)
+        op2 = op
+        ## num_list rules
+        # for i in range (batch_size):
+        #     num_score2[i][:len(generate_nums)] = -1e1
+        #     for j in generated[i]:
+        #         num_score2[i][j] = num_score2[i][j / 2]
+        #     if t == len(num_list[i]) - 1 and not num_flags[i]:
+        #         op2[i,:] = -1e2 
+        #     if generated_ops[i] == len(num_list[i]) - 1:
+        #         op2[i,:] = -1e2
+        #     if t >= 2 * len(num_list[i]) - 1:
+        #         op2[i,1:] = -1e2
+        #         num_score2[i,:] = -1e2
+        #     if t == 0 and target_length[i] > 2:
+        #         num_score2[i,:] = -1e2
+        #     if t == 0 and target_length[i] == 3:
+        #         num_score2[i,:] = num_score2[i,:]/5
 
-        out_score = nn.functional.log_softmax(torch.cat((op, num_score2), dim=1), dim=1)
+        # target length rules
+        for i in range (batch_size):
+            if generated_ops[i] >= (target_length[i] - 1 ) / 2:
+                op2[i,:] = -1e10 #number of ops cannot be greater than (target_length-1)/2
+            if generated_nums[i] == generated_ops[i] and t < target_length[i] - 1:
+                num_score2[i,:] = -1e10 #except the last postion, number of nums cannto be greater than number of ops
+            if t == 0 and target_length[i] > 2:
+                num_score2[i,:] = -1e10 #first cannot be number unless target_length equals to 1
+            if t == target_length[i] - 1:
+                op2[i,:] = -1e10 #last is a number
+            if t >= target_length[i]:
+                op2[i,1:] = -1e10
+                num_score2[i,:] = -1e10 #fix_length
+            if mask_flag:
+                num_score2[i][:len(generate_nums)] = -1e10 #for the first iterations, do not generate 1 and 3.14
+
+        outputs = torch.cat((op2, num_score2), 1)
+        out_score = nn.functional.log_softmax(torch.cat((op2, num_score2), dim=1), dim=1)
+
+        all_node_outputs_mask.append(outputs)
+
         topv, topi = out_score.topk(1)
         topi = topi.squeeze()
         generate_exps[t] = topi
@@ -749,6 +853,7 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
                 node_stack.append(TreeNode(r))
                 node_stack.append(TreeNode(l, left_flag=True))
                 o.append(TreeEmbedding(node_label[idx].unsqueeze(0), False))
+                generated_ops[idx] += 1
             else:
                 current_num = current_nums_embeddings[idx, i - num_start].unsqueeze(0)
                 while len(o) > 0 and o[-1].terminal:
@@ -757,24 +862,45 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
                     current_num = merge(op.embedding, sub_stree.embedding, current_num)
                 o.append(TreeEmbedding(current_num, True))
                 generated[idx].append(i - num_start)
+                num_flags[idx] = True
+                generated_nums[idx] += 1
             if len(o) > 0 and o[-1].terminal:
                 left_childs.append(o[-1].embedding)
             else:
                 left_childs.append(None)
             
-
     generate_exps = generate_exps.transpose(0,1)
     # all_leafs = torch.stack(all_leafs, dim=1)  # B x S x 2
-    all_node_outputs = torch.stack(all_node_outputs, dim=1)  # B x S x N
     # print (all_node_outputs)
     target = target.transpose(0, 1).contiguous()
-    for exp, gt, num, num_stack in zip(generate_exps, target, num_list, nums_stack_batch):
+    
+    all_node_outputs_mask = torch.stack(all_node_outputs_mask, dim=1)  # B x S x N
+
+    for idx, exp, gt, num, num_stack in zip(range(batch_size), generate_exps, target, num_list, nums_stack_batch):
         generate = out_expression_list(exp, output_lang, num)
         ground = out_expression_list(gt, output_lang, num, copy.deepcopy(num_stack))
+
+        all_list = output_lang.index2word[: num_start + len(generate_nums)] + num
+        #print (all_list)
+        #print (all_node_outputs[idx][:target_length[idx]][:num_start+len(generate_nums)+len(num)].detach().cpu().numpy())
+        # print (num)
+        probs = all_node_outputs_mask[idx].detach().cpu().numpy()
+        probs = probs[:target_length[idx]]
+        probs = probs[:, :num_start+len(generate_nums)+len(num)]
         # print (generate)
+        # # print (num)
         # print (ground)
+        fix = find_fix(
+            generate[:target_length[idx]],
+            num_ans[idx],
+            probs,
+            all_list,
+            5)
+        # gen_infix = prefix_to_infix (generate, target_length[idx])
+        # print (gen_infix)
         # print ("\n")
 
+    all_node_outputs = torch.stack(all_node_outputs, dim=1)  # B x S x N
     if USE_CUDA:
         # all_leafs = all_leafs.cuda()
         all_node_outputs = all_node_outputs.cuda()
@@ -796,6 +922,7 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
     generate_optimizer.step()
     merge_optimizer.step()
     return loss.item()  # , loss_0.item(), loss_1.item()
+    # return 0
 
 
 def evaluate_tree(input_batch, input_length, generate_nums, encoder, predict, generate, merge, output_lang, num_pos,
