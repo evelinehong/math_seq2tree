@@ -7,6 +7,7 @@ import math
 import time
 from interruptingcow import timeout
 import signal
+import re
 # sym2priority = {'+': 0, '-': 0, '*': 1, '/': 1}
 # sym2priority.update({str(x):2 for x in digit_list})
 
@@ -39,16 +40,15 @@ exp = lambda x,y: thres_nan(x ** y if abs(x) < 1000 and abs(y) < 10 and x != 1 a
 root = lambda x,y: thres_nan(exp(x, divide(1, y)))
 log = lambda x,base: thres_nan(math.log(x, base) if base > 0 and base != 1 and x > 0 else float('nan'))
 # NAN_THRESHOLD = 10e7
-# thres_nan = lambda x: x if abs(x) < NAN_THRESHOLD else -10000.0
+# thres_nan = lambda x: x if abs(x) < NAN_THRESHOLD else 1e5
 # plus = lambda x,y: thres_nan(x + y)
 # minus = lambda x,y: thres_nan(x - y)
 # times = lambda x,y: thres_nan(x * y)
-# divide = lambda x,y: thres_nan(x / y if y != 0 else -10000.0)
-# exp = lambda x,y: thres_nan(x ** y if abs(x) < 1000 and y < 10 and x != 1 and y != 1 else -10000.0)
+# divide = lambda x,y: thres_nan(x / y if y != 0 else 1e5)
+# exp = lambda x,y: thres_nan(x ** y if abs(x) < 1000 and y < 10 and x != 1 and y != 1 else 1e5)
 # root = lambda x,y: thres_nan(exp(x, divide(1, y)))
-# log = lambda x,base: thres_nan(math.log(x, base) if base > 0 and base != 1 and x > 0 else -10000.0)
+# log = lambda x,base: thres_nan(math.log(x, base) if base > 0 and base != 1 and x > 0 else 1e5)
 symbol2semantic= {'+': plus, '-': minus, '*': times, '/': divide, '^': exp, '**': exp}
-#symbol2semantic.update({x: eval(x) if x.isdigit()})
 inverse_op_left = {'+': minus, '-': plus, '*': divide, '/': times, '^': root, '**': root}
 inverse_op_right = {
     '+': minus,
@@ -132,7 +132,7 @@ class Node:
         try:
             res = op_res[0](left_res[0], right_res[0])
         except:
-            res = 'nan'
+            res = float('nan')
         self._res = [res, prob, max_prob]
         self.prob = prob
         self.max_prob = max_prob
@@ -238,37 +238,81 @@ class ExprTree:
     #         change = PrioritizedItem(node.prob - node.max_prob, (node, target))
     #     return change
 
-    def find_valid_change(self, node, target):
+    def find_valid_change(self, node, target, op):
         if isinstance(node, LeafNode):
             find = False
             for sym in self.sym_list:
                 if not isinstance (sym, str):
-                    if abs(target - sym) < 1e-5:
-                        change = PrioritizedItem(node.prob - node.all_prob[self.sym_list.index(sym)], (node, target, sym))
-                        find = True
+                    if not (op == "**" and sym == 1):
+                        if abs(target - sym) < 1e-7:
+                            change = PrioritizedItem(node.prob - node.all_prob[self.sym_list.index(sym)], (node, target, sym))
+                            find = True
             if not find:
                 change = None
         else:
             change = PrioritizedItem(node.prob - node.max_prob, (node, target))
         return change
 
-    def prefix_to_infix(self, formula):
-        stack = []
-        #prev_op = None
-        #PRIORITY = {"+": 0, "-": 0, "*": 1, "/": 1, "^": 1, "**": 1}
-        for ch in reversed(formula):
-            if not ch in ["+", "-", "*", "/", "^", "**"]:
-                stack.append(ch)
+    # def prefix_to_infix(self, formula):
+    #     stack = []
+    #     #prev_op = None
+    #     #PRIORITY = {"+": 0, "-": 0, "*": 1, "/": 1, "^": 1, "**": 1}
+    #     for ch in reversed(formula):
+    #         if not ch in ["+", "-", "*", "/", "^", "**"]:
+    #             stack.append(ch)
+    #         else:
+    #             a = stack.pop()
+    #             b = stack.pop()
+    #             #if prev_op and PRIORITY[prev_op] < PRIORITY[ch]:
+    #             exp = '('+a+ch+b+')'
+    #             # else:
+    #             #     exp = a+ch+b
+    #             stack.append(exp)
+    #             # prev_op = ch
+    #     return stack[-1]
+
+    def compute_prefix_expression(self, pre_fix):
+        st = list()
+        operators = ["+", "-", "**", "*", "/"]
+        pre_fix.reverse()
+        for p in pre_fix:
+            if p not in operators:
+                pos = re.search("\d+\(", p)
+                if pos:
+                    st.append(eval(p[pos.start(): pos.end() - 1] + "+" + p[pos.end() - 1:]))
+                elif p[-1] == "%":
+                    st.append(float(p[:-1]) / 100)
+                else:
+                    st.append(eval(p))
+            elif p == "+" and len(st) > 1:
+                a = st.pop()
+                b = st.pop()
+                st.append(a + b)
+            elif p == "*" and len(st) > 1:
+                a = st.pop()
+                b = st.pop()
+                st.append(a * b)
+            elif p == "/" and len(st) > 1:
+                a = st.pop()
+                b = st.pop()
+                if b == 0:
+                    return None
+                st.append(a / b)
+            elif p == "-" and len(st) > 1:
+                a = st.pop()
+                b = st.pop()
+                st.append(a - b)
+            elif p == "**" and len(st) > 1:
+                a = st.pop()
+                b = st.pop()
+                if float(b) != 2.0 or float(b) != 3.0:
+                    return None
+                st.append(a ** b)
             else:
-                a = stack.pop()
-                b = stack.pop()
-                #if prev_op and PRIORITY[prev_op] < PRIORITY[ch]:
-                exp = '('+a+ch+b+')'
-                # else:
-                #     exp = a+ch+b
-                stack.append(exp)
-                # prev_op = ch
-        return stack[-1]
+                return None
+        if len(st) == 1:
+            return st.pop()
+        return None
 
     def fix_1step(self, gt):
         # queue = Q.PriorityQueue()
@@ -351,13 +395,15 @@ class ExprTree:
             right = node.right
             op = node.op
 
+            if right.res()[0] == float('nan') or left.res()[0] == float('nan'):
+                return None
             # change left
             try:
                 sub_target = inverse_op_left[op.symbol](target, right.res()[0])
                 if sub_target == float('nan'):
                     change = None
                 else:
-                    change = self.find_valid_change(left, sub_target)
+                    change = self.find_valid_change(left, sub_target, op.symbol)
             except:
                 change = None
             if change is not None:
@@ -375,7 +421,7 @@ class ExprTree:
                 if sub_target == float('nan'):
                     change = None
                 else:
-                    change = self.find_valid_change(right, sub_target)
+                    change = self.find_valid_change(right, sub_target, op.symbol)
             except:
                 change = None
             if change is not None:
@@ -393,7 +439,7 @@ class ExprTree:
             sub_target = None
 
             for new_op in symbol2semantic.keys():
-                if new_op == ori_op and new_op == "**":
+                if new_op == ori_op:
                     continue
 
                 new_exp = [tok.symbol for tok in self.tokens]
@@ -402,28 +448,35 @@ class ExprTree:
                     if not isinstance (new_exp[j], str):
                         new_exp[j] = str(new_exp[j])
 
-                new_str = self.prefix_to_infix(new_exp)
+                # new_str = self.prefix_to_infix(new_exp)
+                
+                # start = time.time()
+                # future = time.time() + 3e-5
+                # try:
+                    # signal.signal(signal.SIGALRM, self.handler)
+                    # signal.alarm(0.1)
+                    
+                #new_res = eval(''.join(new_str))
+                # for idx in range(new_exp):
+                #     if not isinstance (new_exp[idx], str):
+                #         new_exp
 
-                try:
+                new_res = self.compute_prefix_expression(new_exp)
+                #print (new_res)
+                if not new_res:
+                    continue
+                if abs(new_res - gt) < 1e-5:
+                    sub_target = new_op
+                    change = PrioritizedItem(op.prob - op.all_prob[self.sym_list.index(sub_target)], (op, sub_target, sub_target))
 
-                    signal.signal(signal.SIGALRM, self.handler)
-                    signal.alarm(0.1)
-                    new_res = eval(''.join(new_str))
-                    # signal.alarm(0)
+                    # if DEBUG and len(change.item) >= 3:
+                    #     changed_token_ids = old_ids.copy()
+                    #     changed_token_ids[token_idx] = change.item[2]
+                    #     print(f"    try change op: {self.token_id_list_to_str(changed_token_ids)}")
 
-                    # print (new_res)
-                    if abs(new_res - gt) < 1e-5:
-                        sub_target = new_op
-                        change = PrioritizedItem(op.prob - op.all_prob[self.sym_list.index(sub_target)], (op, sub_target, sub_target))
-
-                        # if DEBUG and len(change.item) >= 3:
-                        #     changed_token_ids = old_ids.copy()
-                        #     changed_token_ids[token_idx] = change.item[2]
-                        #     print(f"    try change op: {self.token_id_list_to_str(changed_token_ids)}")
-
-                        queue.put(change)
-                except:
-                    pass
+                    queue.put(change)
+                # except:
+                #     pass
 
 
         return None

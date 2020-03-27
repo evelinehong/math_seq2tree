@@ -76,6 +76,7 @@ def find_fix(pred, gt, all_prob, sym_list, num_start, gt_exp, n_step):
     etree = ExprTree(sym_list, num_start)
     etree.parse(tokens)
     fix = []
+
     if abs(etree.res()[0] - gt) <= 1e-5:
         fix = [sym_list.index(i) for i in pred]
         # print("No fix needed")
@@ -900,57 +901,58 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
         # print (ground)
         # print (num_ans[idx])
 
-        # fix = find_fix(
+        fix = find_fix(
+                    generate[:target_length[idx]],
+                    num_ans[idx],
+                    probs,
+                    all_list,
+                    num_start,
+                    ground,
+                    50)
+
+        if use_buffer:
+            if (not len(fix)) and len(buffer_batch_new[idx]):
+                fix = buffer_batch_new[idx]
+            if len(fix):
+                buffer_batch_new[idx] = fix
+
+        # if use_buffer:
+        #     if len(buffer_batch_new[idx]):
+        #         fix = buffer_batch_new[idx]
+
+        #     else:
+        #         fix = find_fix(
         #             generate[:target_length[idx]],
         #             num_ans[idx],
         #             probs,
         #             all_list,
         #             num_start,
         #             ground,
-        #             20)
-
-        # if use_buffer:
-        #     if (not len(fix)) and len(buffer_batch_new[idx]):
-        #         fix = buffer_batch_new[idx]
-        #     if len(fix):
-        #         buffer_batch_new[idx] = fix
-
-        if use_buffer:
-            if len(buffer_batch_new[idx]):
-                fix = buffer_batch_new[idx]
-
-            else:
-                fix = find_fix(
-                    generate[:target_length[idx]],
-                    num_ans[idx],
-                    probs,
-                    all_list,
-                    num_start,
-                    ground,
-                    50)
-                if len(fix):
-                    buffer_batch_new[idx] = fix
+        #             50)
+        #         if len(fix):
+        #             buffer_batch_new[idx] = fix
 
         
-        else:
-            fix = find_fix(
-                    generate[:target_length[idx]],
-                    num_ans[idx],
-                    probs,
-                    all_list,
-                    num_start,
-                    ground,
-                    50)
+        # else:
+        #     fix = find_fix(
+        #             generate[:target_length[idx]],
+        #             num_ans[idx],
+        #             probs,
+        #             all_list,
+        #             num_start,
+        #             ground,
+        #             50)
         
         if len(fix):
-            fix_exp = out_expression_list(fix, output_lang, num)
-            fix_infix = prefix_to_infix(fix_exp, target_length[idx])
+            #fix_exp = out_expression_list(fix, output_lang, num)
+            #fix_infix = prefix_to_infix(fix_exp, target_length[idx])
             # print (fix_infix)
             # print (fix_exp)
-            number_fix += 1
+            #number_fix += 1
             fix_target[idx][:target_length[idx]] = torch.LongTensor(fix)
         else:
             fix_length[idx] = 0
+        # print (generate)
         # gen_infix = prefix_to_infix (generate, target_length[idx])
         # print (gen_infix)
         # print ("\n")
