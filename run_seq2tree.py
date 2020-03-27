@@ -5,6 +5,8 @@ import time
 import torch.optim
 from src.expressions_transfer import *
 import sys
+import json
+import os
 
 if not sys.warnoptions:
     import warnings
@@ -12,7 +14,7 @@ if not sys.warnoptions:
 batch_size = 64
 embedding_size = 128
 hidden_size = 512
-n_epochs = 80
+n_epochs = 100
 learning_rate = 1e-3
 weight_decay = 1e-5
 beam_size = 5
@@ -84,6 +86,15 @@ for fold in range(5):
     for num in generate_nums:
         generate_num_ids.append(output_lang.word2index[num])
 
+    stats = {
+            'loss': [],
+            'test_epoch': [],
+            'test_exp_acc': [],
+            'test_result_acc': []
+        }
+
+    buffer_batches = [[] for i in range (len(train_pairs))]
+
     for epoch in range(n_epochs):
         encoder_scheduler.step()
         predict_scheduler.step()
@@ -94,17 +105,34 @@ for fold in range(5):
         print("fold:", fold + 1)
         print("epoch:", epoch + 1)
         start = time.time()
+        mask_flag = False
+        pos = 0
+        
         for idx in range(len(input_lengths)): #batch
-            loss = train_tree(
+
+            if idx < 2 and epoch == 0:
+                mask_flag = True
+            use_buffer = True
+            
+            buffer_batches_train = buffer_batches[pos : pos + len(input_lengths[idx])]
+
+            loss, buffer_batch_new = train_tree(
                 input_batches[idx], input_lengths[idx], output_batches[idx], output_lengths[idx],
                 num_stack_batches[idx], num_size_batches[idx], generate_num_ids, encoder, predict, generate, merge,
-                encoder_optimizer, predict_optimizer, generate_optimizer, merge_optimizer, output_lang, num_pos_batches[idx], num_ans_batches[idx], nums_batches[idx])
+                encoder_optimizer, predict_optimizer, generate_optimizer, merge_optimizer, output_lang, num_pos_batches[idx], num_ans_batches[idx], nums_batches[idx], buffer_batches_train, mask_flag, use_buffer)
             loss_total += loss
+
+            buffer_batches[pos : pos+len(input_lengths[idx])] = buffer_batch_new
+            pos += len(input_lengths[idx])
+            
+
+        stats['loss'].append(loss_total / len(input_lengths))
 
         print("loss:", loss_total / len(input_lengths))
         print("training time", time_since(time.time() - start))
         print("--------------------------------")
-        if epoch % 10 == 0 or epoch > n_epochs - 5:
+        if epoch % 5 == 0 or epoch > n_epochs - 5:
+
             value_ac = 0
             equation_ac = 0
             eval_total = 0
@@ -118,6 +146,13 @@ for fold in range(5):
                 if equ_ac:
                     equation_ac += 1
                 eval_total += 1
+
+            stats['test_epoch'].append (epoch)
+            stats['test_exp_acc'].append(float(equation_ac) / eval_total)
+            stats['test_result_acc'].append(float(value_ac) / eval_total)
+            with open('results/' + 'try' + '_fold' + str(fold) + '_stats.json', 'w') as fout:
+                json.dump(stats, fout)
+
             print(equation_ac, value_ac, eval_total)
             print("test_answer_acc", float(equation_ac) / eval_total, float(value_ac) / eval_total)
             print("testing time", time_since(time.time() - start))
