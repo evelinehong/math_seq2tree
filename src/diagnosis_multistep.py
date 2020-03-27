@@ -4,9 +4,11 @@
 import queue as Q
 import numpy as np
 import math
+import time
+from interruptingcow import timeout
+import signal
 # sym2priority = {'+': 0, '-': 0, '*': 1, '/': 1}
 # sym2priority.update({str(x):2 for x in digit_list})
-
 
 # NAN_THRESHOLD = 10e7
 # thres_nan = lambda x: x if abs(eval(x)) < NAN_THRESHOLD else float('nan')
@@ -33,18 +35,28 @@ plus = lambda x,y: thres_nan(x + y)
 minus = lambda x,y: thres_nan(x - y)
 times = lambda x,y: thres_nan(x * y)
 divide = lambda x,y: thres_nan(x / y if y != 0 else float('nan'))
-exp = lambda x,y: thres_nan(x ** y if abs(x) < 10000 and y < 20 else float('nan'))
+exp = lambda x,y: thres_nan(x ** y if abs(x) < 1000 and abs(y) < 10 and x != 1 and y != 1 else float('nan'))
 root = lambda x,y: thres_nan(exp(x, divide(1, y)))
 log = lambda x,base: thres_nan(math.log(x, base) if base > 0 and base != 1 and x > 0 else float('nan'))
-symbol2semantic= {'+': plus, '-': minus, '*': times, '/': divide, '^': exp}
+# NAN_THRESHOLD = 10e7
+# thres_nan = lambda x: x if abs(x) < NAN_THRESHOLD else -10000.0
+# plus = lambda x,y: thres_nan(x + y)
+# minus = lambda x,y: thres_nan(x - y)
+# times = lambda x,y: thres_nan(x * y)
+# divide = lambda x,y: thres_nan(x / y if y != 0 else -10000.0)
+# exp = lambda x,y: thres_nan(x ** y if abs(x) < 1000 and y < 10 and x != 1 and y != 1 else -10000.0)
+# root = lambda x,y: thres_nan(exp(x, divide(1, y)))
+# log = lambda x,base: thres_nan(math.log(x, base) if base > 0 and base != 1 and x > 0 else -10000.0)
+symbol2semantic= {'+': plus, '-': minus, '*': times, '/': divide, '^': exp, '**': exp}
 #symbol2semantic.update({x: eval(x) if x.isdigit()})
-inverse_op_left = {'+': minus, '-': plus, '*': divide, '/': times, '^': root}
+inverse_op_left = {'+': minus, '-': plus, '*': divide, '/': times, '^': root, '**': root}
 inverse_op_right = {
     '+': minus,
     '-': lambda target, left: minus(left, target),
     '*': divide,
     '/': lambda target, left: divide(left, target),
-    '^': log}
+    '^': log,
+    '**': log}
 
 class LeafNode:
     def __init__(self, symbol, all_prob, sym_list, num_start):
@@ -81,7 +93,7 @@ class LeafNode:
             all_prob_new[self.num_start:] = 0
         else:
             all_prob_new[:self.num_start] = 0
-        # all_prob_new[self.sym_list.index(self.symbol)] = 0
+        all_prob_new[self.sym_list.index(self.symbol)] = 1e-6
         all_prob_new /= all_prob_new.sum()
         new_symbol = np.random.choice(self.sym_list, p = all_prob_new)
 
@@ -90,6 +102,7 @@ class LeafNode:
 
         self.prev_symbol = self.symbol
         self.symbol = new_symbol
+
         self.initialize()
         return self.symbol
     
@@ -116,7 +129,10 @@ class Node:
         op_res = self.op.res()
         prob = left_res[1] + right_res[1] + op_res[1]
         max_prob = left_res[2] + right_res[2] + op_res[2]
-        res = op_res[0](left_res[0], right_res[0])
+        try:
+            res = op_res[0](left_res[0], right_res[0])
+        except:
+            res = 'nan'
         self._res = [res, prob, max_prob]
         self.prob = prob
         self.max_prob = max_prob
@@ -136,6 +152,10 @@ class ExprTree:
         self.sym_list = sym_list
         self.num_start = num_start
 
+    def handeler(self, signo, frame):
+        print ("runtime error")
+        raise RuntimeError
+
     def parse(self, tokens=None):
         if tokens is not None:
             tokens = [LeafNode(*tok, self.sym_list, self.num_start) for tok in tokens]
@@ -146,20 +166,33 @@ class ExprTree:
         values = []
         operators = []
 
-        for token in tokens:
-            if token.symbol in ["+", "-", "*", "/", "^"]:
-                operators.append(token)
-            else:
+        # for token in tokens:
+        #     if token.symbol in ["+", "-", "*", "/", "^", "**"]:
+        #         operators.append(token)
+        #     else:
+        #         values.append(token)
+        #         while len(values) == 2:
+        #             op = operators.pop()
+        #             right = values.pop()
+        #             left = values.pop()
+        #             new_node = Node(left, right, op)
+        #             op.parent = new_node
+        #             right.parent = new_node
+        #             left.parent = new_node
+        #             values.append(new_node)
+
+        for token in reversed(tokens):
+            if token.symbol not in ["+", "-", "*", "/", "^", "**"]:
                 values.append(token)
-                while len(values) == 2:
-                    op = operators.pop()
-                    right = values.pop()
-                    left = values.pop()
-                    new_node = Node(left, right, op)
-                    op.parent = new_node
-                    right.parent = new_node
-                    left.parent = new_node
-                    values.append(new_node)
+            else:
+                op = token
+                left = values.pop()
+                right = values.pop()
+                new_node = Node (left, right, op)
+                op.parent = new_node
+                right.parent = new_node
+                left.parent = new_node
+                values.append(new_node)
         # for token in tokens:
         #     if token.symbol in digit_list:
         #         values.append(token)
@@ -221,20 +254,20 @@ class ExprTree:
 
     def prefix_to_infix(self, formula):
         stack = []
-        prev_op = None
-        PRIORITY = {"+": 0, "-": 0, "*": 1, "/": 1, "^": 1}
+        #prev_op = None
+        #PRIORITY = {"+": 0, "-": 0, "*": 1, "/": 1, "^": 1, "**": 1}
         for ch in reversed(formula):
-            if not ch in ["+", "-", "*", "/", "^"]:
+            if not ch in ["+", "-", "*", "/", "^", "**"]:
                 stack.append(ch)
             else:
                 a = stack.pop()
                 b = stack.pop()
-                if prev_op and PRIORITY[prev_op] < PRIORITY[ch]:
-                    exp = '('+a+')'+ch+b
-                else:
-                    exp = a+ch+b
+                #if prev_op and PRIORITY[prev_op] < PRIORITY[ch]:
+                exp = '('+a+ch+b+')'
+                # else:
+                #     exp = a+ch+b
                 stack.append(exp)
-                prev_op = ch
+                # prev_op = ch
         return stack[-1]
 
     def fix_1step(self, gt):
@@ -319,8 +352,14 @@ class ExprTree:
             op = node.op
 
             # change left
-            sub_target = inverse_op_left[op.symbol](target, right.res()[0])
-            change = self.find_valid_change(left, sub_target)
+            try:
+                sub_target = inverse_op_left[op.symbol](target, right.res()[0])
+                if sub_target == float('nan'):
+                    change = None
+                else:
+                    change = self.find_valid_change(left, sub_target)
+            except:
+                change = None
             if change is not None:
                 # if DEBUG and len(change.item) >= 3:
                 #     changed_token_ids = old_ids.copy()
@@ -333,7 +372,10 @@ class ExprTree:
             # change right
             try:
                 sub_target = inverse_op_right[op.symbol](target, left.res()[0])
-                change = self.find_valid_change(right, sub_target)
+                if sub_target == float('nan'):
+                    change = None
+                else:
+                    change = self.find_valid_change(right, sub_target)
             except:
                 change = None
             if change is not None:
@@ -349,8 +391,9 @@ class ExprTree:
             ori_op = op.symbol
             token_idx = self.tokens.index(op)
             sub_target = None
+
             for new_op in symbol2semantic.keys():
-                if new_op == ori_op:
+                if new_op == ori_op and new_op == "**":
                     continue
 
                 new_exp = [tok.symbol for tok in self.tokens]
@@ -360,10 +403,15 @@ class ExprTree:
                         new_exp[j] = str(new_exp[j])
 
                 new_str = self.prefix_to_infix(new_exp)
-                # new_str = [str(tok.res()[0]) for tok in self.tokens]
-                # new_str[token_idx] = "**" if new_op=="^" else new_op
+
                 try:
+
+                    signal.signal(signal.SIGALRM, self.handler)
+                    signal.alarm(0.1)
                     new_res = eval(''.join(new_str))
+                    # signal.alarm(0)
+
+                    # print (new_res)
                     if abs(new_res - gt) < 1e-5:
                         sub_target = new_op
                         change = PrioritizedItem(op.prob - op.all_prob[self.sym_list.index(sub_target)], (op, sub_target, sub_target))
@@ -376,6 +424,8 @@ class ExprTree:
                         queue.put(change)
                 except:
                     pass
+
+
         return None
     
     def fix(self, gt, n_step=1):
@@ -385,7 +435,13 @@ class ExprTree:
         for i in range(n_step):
             if i > 0:
                 self.parse()
+                # results = [tok.symbol for tok in self.tokens]
+                # # res = [tok._res for tok in self.tokens]
+                # print (results)
+                # # print (res)
+                # print (self.res())
             fix = self.fix_1step(gt)
+
             if fix is not None:
                 return fix
             else:
@@ -398,12 +454,14 @@ class ExprTree:
 
                     prob_old_string = np.sum([x.prob for x in self.tokens])
                     token_ids = np.random.choice(len(self.tokens), n_sym_change, replace=False)
+                    results = [tok.symbol for tok in self.tokens]
                     for tok_id in token_ids:
                         self.tokens[tok_id].sample()
                     prob_new_string = np.sum([x.prob for x in self.tokens])
                     accept_ratio = np.exp(prob_new_string - prob_old_string)
                     if np.random.random() < accept_ratio:
                         accept = True
+                        results = [tok.symbol for tok in self.tokens]
                     else:
                         for tok_id in token_ids:
                             self.tokens[tok_id].resume()

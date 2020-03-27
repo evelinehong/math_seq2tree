@@ -683,9 +683,8 @@ def prepare_data(pairs_trained, pairs_tested, trim_min_count, generate_nums, cop
         output_cell = indexes_from_sentence(output_lang, pair[1], tree)
         # train_pairs.append((input_cell, len(input_cell), output_cell, len(output_cell),
         #                     pair[2], pair[3], num_stack, pair[4]))
-        buffer = [[] for i in range (input_cell)]
         train_pairs.append((input_cell, len(input_cell), output_cell, len(output_cell),
-                            pair[2], pair[3], num_stack, pair[4], buffer))
+                            pair[2], pair[3], num_stack, pair[4]))
     print('Indexed %d words in input language, %d words in output' % (input_lang.n_words, output_lang.n_words))
     print('Number of training data %d' % (len(train_pairs)))
     for pair in pairs_tested:
@@ -829,7 +828,6 @@ def prepare_train_batch(pairs_to_batch, batch_size):
     num_pos_batches = []
     num_size_batches = []
     num_ans_batches = []
-    buffer_batches = []
     while pos + batch_size < len(pairs):
         batches.append(pairs[pos:pos+batch_size])
         pos += batch_size
@@ -853,8 +851,7 @@ def prepare_train_batch(pairs_to_batch, batch_size):
         num_pos_batch = []
         num_size_batch = []
         num_ans_batch = []
-        buffer_batch = []
-        for i, li, j, lj, num, num_pos, num_stack, answer, buffer in batch:
+        for i, li, j, lj, num, num_pos, num_stack, answer in batch:
             num_batch.append(num)
             input_batch.append(pad_seq(i, li, input_len_max))
             output_batch.append(pad_seq(j, lj, output_len_max))
@@ -862,7 +859,6 @@ def prepare_train_batch(pairs_to_batch, batch_size):
             num_pos_batch.append(num_pos)
             num_size_batch.append(len(num_pos))
             num_ans_batch.append(answer)
-            buffer_batch.append(buffer)
         input_batches.append(input_batch)
         nums_batches.append(num_batch)
         output_batches.append(output_batch)
@@ -870,8 +866,7 @@ def prepare_train_batch(pairs_to_batch, batch_size):
         num_pos_batches.append(num_pos_batch)
         num_size_batches.append(num_size_batch)
         num_ans_batches.append(num_ans_batch)
-        buffer_batches.append(buffer_batch)
-    return input_batches, input_lengths, output_batches, output_lengths, nums_batches, num_stack_batches, num_pos_batches, num_size_batches, num_ans_batches, buffer_batches
+    return input_batches, input_lengths, output_batches, output_lengths, nums_batches, num_stack_batches, num_pos_batches, num_size_batches, num_ans_batches
 
 
 def get_num_stack(eq, output_lang, num_pos):

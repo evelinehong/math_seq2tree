@@ -32,23 +32,23 @@ def time_since(s):  # compute time
 def prefix_to_infix(formula, length):
     formula = formula[:length]
     stack = []
-    prev_op = None
-    PRIORITY = {"+": 0, "-": 0, "*": 1, "/": 1, "^": 1}
+    #prev_op = None
+    #PRIORITY = {"+": 0, "-": 0, "*": 1, "/": 1, "^": 1, "**": 1}
     for ch in reversed(formula):
-        if not ch in ["+", "-", "*", "/", "^"]:
+        if not ch in ["+", "-", "*", "/", "^", "**"]:
             stack.append(ch)
         else:
             a = stack.pop()
             b = stack.pop()
-            if prev_op and PRIORITY[prev_op] < PRIORITY[ch]:
-                exp = '('+a+')'+ch+b
-            else:
-                exp = a+ch+b
+            #if prev_op and PRIORITY[prev_op] < PRIORITY[ch]:
+            exp = '('+a+ch+b+')'
+            #else:
+            #    exp = a+ch+b
             stack.append(exp)
             prev_op = ch
     return stack[-1]
 
-def find_fix(pred, gt, all_prob, sym_list, num_start, n_step):
+def find_fix(pred, gt, all_prob, sym_list, num_start, gt_exp, n_step):
     """
     preds: batch_size * expr len                 int - predicted ids
     res: batch_size                              float - labeled correct result
@@ -61,11 +61,14 @@ def find_fix(pred, gt, all_prob, sym_list, num_start, n_step):
         for i in range(len(pred)):
             if  any(char.isdigit() for char in pred[i]):
                 pred[i] = eval(pred[i].replace("%", "/100"))
+            if pred[i] == "^":
+                pred[i] = "**"
         
         for i in range(len(sym_list)):
             if  any(char.isdigit() for char in sym_list[i]):
                 sym_list[i] = eval(sym_list[i].replace("%", "/100"))
-    
+            if sym_list[i] == "^":
+                sym_list[i] = "**"
     except:
         return []
 
@@ -88,7 +91,6 @@ def find_fix(pred, gt, all_prob, sym_list, num_start, n_step):
             # print ("fix found")
             # print (gt)
             # print (pred)
-            # print (output[0])
 
     return fix
 
@@ -705,7 +707,7 @@ class TreeEmbedding:  # the class save the tree
 
 def train_tree(input_batch, input_length, target_batch, target_length, nums_stack_batch, num_size_batch, generate_nums,
                encoder, predict, generate, merge, encoder_optimizer, predict_optimizer, generate_optimizer,
-               merge_optimizer, output_lang, num_pos, num_ans, num_list, mask_flag = False, english=False):
+               merge_optimizer, output_lang, num_pos, num_ans, num_list, buffer_batch, mask_flag = False, use_buffer = False, english=False):
     # sequence mask for attention
     seq_mask = []
     max_len = max(input_length)
@@ -808,7 +810,7 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
             if generated_ops[i] >= (target_length[i] - 1 ) / 2:
                 op2[i,:] = -1e10 #number of ops cannot be greater than (target_length-1)/2
             if generated_nums[i] == generated_ops[i] and t < target_length[i] - 1:
-                num_score2[i,:] = -1e10 #except the last postion, number of nums cannto be greater than number of ops
+                num_score2[i,:] = -1e10 #except the last postion, number of nums cannot be greater than number of ops
             if t == 0 and target_length[i] > 2:
                 num_score2[i,:] = -1e10 #first cannot be number unless target_length equals to 1
             if t == target_length[i] - 1:
@@ -877,6 +879,10 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
     fix_target = torch.zeros(batch_size, max_target_length, dtype = torch.long)
     fix_length = target_length
 
+    buffer_batch_new = buffer_batch.copy()
+
+    number_fix = 0
+
     for idx, exp, gt, num, num_stack in zip(range(batch_size), generate_exps, target, num_list, nums_stack_batch):
         generate = out_expression_list(exp, output_lang, num)
         ground = out_expression_list(gt, output_lang, num, copy.deepcopy(num_stack))
@@ -888,24 +894,69 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
         probs = all_node_outputs_mask[idx].detach().cpu().numpy()
         probs = probs[:target_length[idx]]
         probs = probs[:, :num_start+len(generate_nums)+len(num)]
-        # print (generate)
+        # print (prefix_to_infix(generate, target_length[idx]))
         # # print (num)
+        # print (prefix_to_infix(ground, target_length[idx]))
         # print (ground)
-        fix = find_fix(
-            generate[:target_length[idx]],
-            num_ans[idx],
-            probs,
-            all_list,
-            num_start,
-            20)
+        # print (num_ans[idx])
+
+        # fix = find_fix(
+        #             generate[:target_length[idx]],
+        #             num_ans[idx],
+        #             probs,
+        #             all_list,
+        #             num_start,
+        #             ground,
+        #             20)
+
+        # if use_buffer:
+        #     if (not len(fix)) and len(buffer_batch_new[idx]):
+        #         fix = buffer_batch_new[idx]
+        #     if len(fix):
+        #         buffer_batch_new[idx] = fix
+
+        if use_buffer:
+            if len(buffer_batch_new[idx]):
+                fix = buffer_batch_new[idx]
+
+            else:
+                fix = find_fix(
+                    generate[:target_length[idx]],
+                    num_ans[idx],
+                    probs,
+                    all_list,
+                    num_start,
+                    ground,
+                    50)
+                if len(fix):
+                    buffer_batch_new[idx] = fix
+
+        
+        else:
+            fix = find_fix(
+                    generate[:target_length[idx]],
+                    num_ans[idx],
+                    probs,
+                    all_list,
+                    num_start,
+                    ground,
+                    50)
         
         if len(fix):
+            fix_exp = out_expression_list(fix, output_lang, num)
+            fix_infix = prefix_to_infix(fix_exp, target_length[idx])
+            # print (fix_infix)
+            # print (fix_exp)
+            number_fix += 1
             fix_target[idx][:target_length[idx]] = torch.LongTensor(fix)
         else:
             fix_length[idx] = 0
         # gen_infix = prefix_to_infix (generate, target_length[idx])
         # print (gen_infix)
         # print ("\n")
+    # print (number_fix)
+
+    # print ("\n")
 
     all_node_outputs = torch.stack(all_node_outputs, dim=1)  # B x S x N
     if USE_CUDA:
@@ -929,7 +980,7 @@ def train_tree(input_batch, input_length, target_batch, target_length, nums_stac
     predict_optimizer.step()
     generate_optimizer.step()
     merge_optimizer.step()
-    return loss.item()  # , loss_0.item(), loss_1.item()
+    return loss.item(), buffer_batch_new  # , loss_0.item(), loss_1.item()
     # return 0
 
 

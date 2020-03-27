@@ -49,7 +49,7 @@ def masked_cross_entropy(logits, target, length):
     mask = sequence_mask(sequence_length=length, max_len=target.size(1))
     losses = losses * mask.float()
     loss = losses.sum() / length.float().sum()
-    # if loss.item() > 10:jn
+    # if loss.item() > 10:
     #     print(losses, target)
     return loss
 
@@ -79,7 +79,6 @@ def masked_cross_entropy_without_logit(logits, target, length):
     # log_probs_flat: (batch * max_len, num_classes)
     log_probs_flat = torch.log(logits_flat + 1e-12)
 
-    print (log_probs_flat)
     # target_flat: (batch * max_len, 1)
     target_flat = target.view(-1, 1)
     # losses_flat: (batch * max_len, 1)
