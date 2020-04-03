@@ -484,7 +484,8 @@ class ExprTree:
     def fix(self, gt, n_step=1):
         entropy_list = np.array([x.entropy() for x in self.tokens])
         entropy_list = entropy_list / entropy_list.sum()
-        
+        res_list = []
+
         for i in range(n_step):
             if i > 0:
                 self.parse()
@@ -499,8 +500,9 @@ class ExprTree:
                 return fix
             else:
                 accept = False
-
-                while not accept:
+                not_accept_times = 0
+                while not accept and not_accept_times <= 5:
+                    not_accept_times += 1
                     n_sym_change = int(np.abs(np.random.normal(0, 1, 1)))
                     n_sym_change = np.maximum(n_sym_change, 1)
                     n_sym_change = np.minimum(n_sym_change, len(self.tokens))
@@ -513,8 +515,14 @@ class ExprTree:
                     prob_new_string = np.sum([x.prob for x in self.tokens])
                     accept_ratio = np.exp(prob_new_string - prob_old_string)
                     if np.random.random() < accept_ratio:
-                        accept = True
                         results = [tok.symbol for tok in self.tokens]
+                        if results not in res_list:
+                            res_list.append(results)
+                            accept = True
+                        else:
+                            accept = False
+                            for tok_id in token_ids:
+                                self.tokens[tok_id].resume()
                     else:
                         for tok_id in token_ids:
                             self.tokens[tok_id].resume()

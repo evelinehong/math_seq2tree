@@ -203,27 +203,31 @@ class Prediction(nn.Module):
         self.embedding_weight = nn.Parameter(torch.randn(1, input_size, hidden_size))
 
         # for Computational symbols and Generated numbers
-        self.concat_l = nn.Linear(hidden_size, hidden_size)
-        self.concat_r = nn.Linear(hidden_size * 2, hidden_size)
-        self.concat_lg = nn.Linear(hidden_size, hidden_size)
-        self.concat_rg = nn.Linear(hidden_size * 2, hidden_size)
+        self.concat_l = nn.Linear(hidden_size + 64, hidden_size)
+        self.concat_r = nn.Linear(hidden_size * 2 + 64, hidden_size)
+        self.concat_lg = nn.Linear(hidden_size + 64, hidden_size)
+        self.concat_rg = nn.Linear(hidden_size * 2 + 64, hidden_size)
 
         self.ops = nn.Linear(hidden_size * 2, op_nums)
 
         self.attn = TreeAttn(hidden_size, hidden_size)
         self.score = Score(hidden_size * 2, hidden_size)
 
-    def forward(self, node_stacks, left_childs, encoder_outputs, num_pades, padding_hidden, seq_mask, mask_nums):
+    def forward(self, noises, node_stacks, left_childs, encoder_outputs, num_pades, padding_hidden, seq_mask, mask_nums):
         current_embeddings = []
-
-        for st in node_stacks:
+        for st, noise in zip(node_stacks, noises):
             if len(st) == 0:
-                current_embeddings.append(padding_hidden)
+                noise = noise.unsqueeze(0)
+                padding_hidden2 = torch.cat((padding_hidden, noise), dim=1)
+                current_embeddings.append(padding_hidden2)
             else:
+                noise = noise.unsqueeze(0)
                 current_node = st[-1]
-                current_embeddings.append(current_node.embedding)
+                current_node_embedding = torch.cat((current_node.embedding, noise), dim = 1)
+                current_embeddings.append(current_node_embedding)
 
         current_node_temp = []
+
         for l, c in zip(left_childs, current_embeddings):
             if l is None:
                 c = self.dropout(c)
