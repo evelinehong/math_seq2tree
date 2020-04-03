@@ -86,15 +86,17 @@ for fold in range(5):
     for num in generate_nums:
         generate_num_ids.append(output_lang.word2index[num])
 
+    buffer_batches = [[] for i in range (len(train_pairs))]
+
     stats = {
             'loss': [],
             'test_epoch': [],
             'test_exp_acc': [],
-            'test_result_acc': []
+            'test_result_acc': [],
+            'iteration': []
         }
 
-    buffer_batches = [[] for i in range (len(train_pairs))]
-
+    iteration = 0
     for epoch in range(n_epochs):
         encoder_scheduler.step()
         predict_scheduler.step()
@@ -107,28 +109,27 @@ for fold in range(5):
         start = time.time()
         mask_flag = False
         pos = 0
-        
+        epo_iteration = 0
         for idx in range(len(input_lengths)): #batch
 
             if idx < 2 and epoch == 0:
                 mask_flag = True
-            use_buffer = True
-            
             buffer_batches_train = buffer_batches[pos : pos + len(input_lengths[idx])]
 
-            loss, buffer_batch_new = train_tree(
+            loss, buffer_batch_new, iterations = train_tree(
                 input_batches[idx], input_lengths[idx], output_batches[idx], output_lengths[idx],
                 num_stack_batches[idx], num_size_batches[idx], generate_num_ids, encoder, predict, generate, merge,
-                encoder_optimizer, predict_optimizer, generate_optimizer, merge_optimizer, output_lang, num_pos_batches[idx], num_ans_batches[idx], nums_batches[idx], buffer_batches_train, mask_flag, use_buffer)
+                encoder_optimizer, predict_optimizer, generate_optimizer, merge_optimizer, output_lang, num_pos_batches[idx], num_ans_batches[idx], nums_batches[idx], buffer_batches_train, epoch, mask_flag)
             loss_total += loss
-
+            iteration += iterations
+            epo_iteration += iterations
             buffer_batches[pos : pos+len(input_lengths[idx])] = buffer_batch_new
             pos += len(input_lengths[idx])
             
 
-        stats['loss'].append(loss_total / len(input_lengths))
-
-        print("loss:", loss_total / len(input_lengths))
+        stats['loss'].append(loss_total / epo_iteration)
+        stats['iteration'].append(iteration)
+        print("loss:", loss_total / epo_iteration)
         print("training time", time_since(time.time() - start))
         print("--------------------------------")
         if epoch % 5 == 0 or epoch > n_epochs - 5:
@@ -150,7 +151,7 @@ for fold in range(5):
             stats['test_epoch'].append (epoch)
             stats['test_exp_acc'].append(float(equation_ac) / eval_total)
             stats['test_result_acc'].append(float(value_ac) / eval_total)
-            with open('results/' + 'try' + '_fold' + str(fold) + '_stats.json', 'w') as fout:
+            with open('results/' + 'try_noise' + '_fold' + str(fold) + '_stats.json', 'w') as fout:
                 json.dump(stats, fout)
 
             print(equation_ac, value_ac, eval_total)
